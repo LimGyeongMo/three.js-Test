@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <title>React App</title>
+        <style>
+            /* 기본적으로 body와 html 크기 100% 설정 */
+            body,
+            html {
+                margin: 0;
+                padding: 0;
+                height: 100%;
+                overflow: hidden;
+            }
+
+            /* 캔버스를 부모 요소의 크기에 맞게 100%로 설정 */
+            .canvas-container {
+                position: relative;
+                width: 100%;
+                height: 100%;
+            }
+
+            canvas {
+                display: block;
+                width: 100%;
+                height: 100%;
+            }
+
+            .balloon {
+                position: absolute;
+                background: #ffffff;
+                color: #01cafe;
+                padding: 2vw;
+                border-radius: 10px;
+
+                /* 반응형 최소 크기 설정 */
+                min-width: 6vw;
+                min-height: 2vh;
+
+                /* 텍스트 크기 반응형 설정 */
+                font-size: 2.5vw;
+                text-align: center;
+                opacity: 0;
+                transition: opacity 0.5s ease;
+
+                display: inline-block; /* 텍스트 길이에 따라 크기 조정 */
+                white-space: nowrap; /* 텍스트가 한 줄에 있도록 설정 (줄바꿈 방지) */
+            }
+
+            /* 나타나는 애니메이션 */
+            .fade-in {
+                animation: fadeIn 0.5s forwards;
+            }
+
+            /* 사라지는 애니메이션 */
+            .fade-out {
+                animation: fadeOut 0.5s forwards;
+            }
+
+            @keyframes fadeIn {
+                from {
+                    opacity: 0;
+                }
+                to {
+                    opacity: 1;
+                }
+            }
+
+            @keyframes fadeOut {
+                from {
+                    opacity: 1;
+                }
+                to {
+                    opacity: 0;
+                }
+            }
+
+            .food {
+                position: absolute;
+                background: #ffffff;
+                color: #01cafe;
+                padding: 10px;
+                border-radius: 10px;
+                min-width: 20vw;
+                min-height: 3vh;
+                opacity: 1;
+                transition: opacity 0.5s ease;
+
+                /* 중앙 하단에 위치시키기 */
+                left: 50%;
+                bottom: 20px; /* 페이지 하단에서의 간격 */
+                transform: translateX(-50%);
+
+                font-size: 3vw;
+
+                /* Flexbox로 텍스트 중앙 정렬 */
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                z-index: 10;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="canvas-container">
+            <canvas id="canvas"></canvas>
+            <div id="btn" class="food">먹이주기</div>
+        </div>
+        <!-- 말풍선 이미지 요소 -->
+        <div id="balloon" class="balloon">반가워~</div>
+        <div id="heartContainer"></div>
+        <!-- heart 애니메이션을 위한 컨테이너 -->
+
+        <script type="module">
+            import { GLTFLoader } from "https://unpkg.com/three@0.121.1/examples/jsm/loaders/GLTFLoader.js";
+            import * as THREE from "https://unpkg.com/three@0.121.1/build/three.module.js";
+            import { OrbitControls } from "https://unpkg.com/three@0.121.1/examples/jsm/controls/OrbitControls.js";
+            import { TrackballControls } from "https://unpkg.com/three@0.121.1/examples/jsm/controls/TrackballControls.js";
+            // import { init } from "./heart.js";
+
+            let scene = new THREE.Scene();
+            let renderer = new THREE.WebGLRenderer({
+                canvas: document.querySelector("#canvas"),
+                antialias: true,
+            });
+
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            let camera = new THREE.PerspectiveCamera(15, 1);
+            camera.position.set(0, 0, 20); // 카메라 위치 설정
+
+            let controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; // 부드러운 회전을 위한 damping 활성화
+            controls.dampingFactor = 0.25;
+
+            let loader = new GLTFLoader();
+            let model;
+            let isShaking = false; // 떨림 애니메이션 활성화 여부
+            let shakeStartTime = 0; // 떨림 시작 시간
+            const balloon = document.getElementById("balloon"); // 말풍선 요소
+            const btn = document.getElementById("btn"); // 버튼 요소
+
+            loader.load("shiba/scene.gltf", function (gltf) {
+                // 캔버스 크기 변경 시 리사이즈 처리
+                window.addEventListener("resize", () => {
+                    const width = window.innerWidth;
+                    const height = window.innerHeight;
+
+                    // 캔버스 크기 조정
+                    renderer.setSize(width, height);
+                    camera.aspect = width / height; // 화면 비율 업데이트
+                    camera.updateProjectionMatrix(); // 카메라의 비율에 맞게 투영 행렬 업데이트
+
+                    updateBalloonPosition();
+                });
+
+                model = gltf.scene;
+                scene.add(model);
+                scene.background = new THREE.Color("black");
+
+                let ambientLight = new THREE.AmbientLight(0xffffff, 0.5); // 색상과 강도
+                scene.add(ambientLight);
+
+                let dirLight = new THREE.DirectionalLight(0xffffff, 0.5);
+                dirLight.position.set(0, 5, 5); // 위치 설정
+                scene.add(dirLight);
+                animate();
+
+                // Raycaster 및 마우스 벡터 생성
+                const raycaster = new THREE.Raycaster();
+                const mouse = new THREE.Vector2();
+
+                // 캔버스 요소에 클릭 이벤트 리스너 추가
+                canvas.addEventListener("click", onClick, false);
+                canvas.addEventListener("touchstart", onTouchStart, false); // 모바일용 터치 이벤트
+                btn.addEventListener("click", eat, false);
+
+                function onClick(event) {
+                    console.log("모델 클릭되었습니다!");
+
+                    // 마우스 좌표를 캔버스 크기를 기준
+                    const rect = canvas.getBoundingClientRect();
+                    mouse.x =
+                        ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                    mouse.y =
+                        -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+                    // 레이캐스터 설정
+                    raycaster.setFromCamera(mouse, camera);
+
+                    // 교차 검사
+                    const intersects = raycaster.intersectObject(model, true);
+
+                    if (intersects.length > 0) {
+                        console.log("모델 클릭 시 말풍선만 나타남");
+                        // 클릭 시 말풍선만 표시
+                        showBalloon(getRandomName());
+                    }
+                }
+
+                function onTouchStart(event) {
+                    console.log("모델 클릭되었습니다!");
+
+                    // 마우스 좌표를 캔버스 크기를 기준
+                    const rect = canvas.getBoundingClientRect();
+                    mouse.x =
+                        ((event.touches[0].clientX - rect.left) / rect.width) *
+                            2 -
+                        1;
+                    mouse.y =
+                        -((event.touches[0].clientY - rect.top) / rect.height) *
+                            2 +
+                        1;
+
+                    // 레이캐스터 설정
+                    raycaster.setFromCamera(mouse, camera);
+
+                    // 교차 검사
+                    const intersects = raycaster.intersectObject(model, true);
+
+                    if (intersects.length > 0) {
+                        console.log("모델 클릭 시 말풍선만 나타남");
+                        // 클릭 시 말풍선만 표시
+                        showBalloon(getRandomName());
+                    }
+                }
+
+                function eat(event) {
+                    // 버튼 클릭 시 떨림 효과 실행
+                    isShaking = true;
+                    shakeStartTime = performance.now() / 1000;
+                    showBalloon("고마워");
+                    // init();
+
+                    setTimeout(() => {
+                        document.querySelector("#heartContainer").innerHTML =
+                            ""; // heart 애니메이션 제거
+                    }, 1000);
+                }
+
+                function animate() {
+                    requestAnimationFrame(animate);
+
+                    // 떨림 애니메이션 적용
+                    if (isShaking && model) {
+                        const currentTime = performance.now() / 1000;
+                        const elapsedTime = currentTime - shakeStartTime;
+
+                        if (elapsedTime < 0.5) {
+                            // 떨림 지속 시간 (0.5초)
+                            const shakeIntensity = 0.1;
+                            model.position.x =
+                                Math.sin(elapsedTime * 50) * shakeIntensity;
+                            model.position.y =
+                                Math.sin(elapsedTime * 30) * shakeIntensity;
+                        } else {
+                            // 떨림 종료 후 위치 초기화
+                            model.position.set(0, 0, 0);
+                            isShaking = false;
+                        }
+                    }
+
+                    controls.update(); // OrbitControls
+                    renderer.render(scene, camera);
+                }
+
+                // 초기 설정 및 화면 크기 변경 이벤트 리스너 추가
+                window.addEventListener("resize", onWindowResize);
+            });
+
+            // 말풍선 위치 갱신 함수
+            function updateBalloonPosition() {
+                if (!model) return;
+
+                // 모델의 머리 위치를 기준으로 좌표 설정
+                const modelPosition = new THREE.Vector3(0, 0.5, 0); // 모델 위쪽으로 위치
+                model.localToWorld(modelPosition);
+
+                // 화면의 2D 좌표로 변환
+                const vector = modelPosition.clone().project(camera);
+                const x =
+                    (vector.x * 0.5 + 0.5) * renderer.domElement.clientWidth;
+                const y =
+                    (vector.y * -0.5 + 0.5) * renderer.domElement.clientHeight;
+
+                // HTML 요소 위치 설정
+                balloon.style.left = `${x - balloon.offsetWidth / 2}px`;
+                balloon.style.top = `${y - balloon.offsetHeight}px`;
+            }
+
+            // 말풍선 표시 함수
+            function showBalloon(text) {
+                balloon.textContent = text; // 말풍선에 랜덤 이름 설정
+                balloon.classList.remove("fade-out");
+                balloon.classList.add("fade-in");
+
+                // 일정 시간 후에 사라지도록 설정
+                setTimeout(() => {
+                    balloon.classList.remove("fade-in");
+                    balloon.classList.add("fade-out");
+                }, 500);
+            }
+
+            const names = [
+                "안녕",
+                "경모~",
+                "배고파",
+                "밥줘",
+                "메롱",
+                "바보",
+                "굿",
+            ]; // 원하는 이름 목록
+
+            function getRandomName() {
+                return names[Math.floor(Math.random() * names.length)];
+            }
+        </script>
+    </body>
+</html>
